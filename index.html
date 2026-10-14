@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visualizador BPMN</title>
+  
+  <!-- Estilos e Scripts do BPMN.js -->
+  <link rel="stylesheet" href="https://unpkg.com/bpmn-js@17.11.1/dist/assets/diagram-js.css" />
+  <link rel="stylesheet" href="https://unpkg.com/bpmn-js@17.11.1/dist/assets/bpmn-font/css/bpmn.css" />
+  <script src="https://unpkg.com/bpmn-js@17.11.1/dist/bpmn-navigated-viewer.development.js"></script>
+  
+  <!-- Cliente Supabase JS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body, html { margin: 0; padding: 0; width: 100%; height: 100%; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; }
+    
+    /* Área do Diagrama em Tela Cheia */
+    #canvas-container { width: 100vw; height: 100vh; position: relative; background: #f8f9fa; }
+    #canvas { width: 100%; height: 100%; }
+
+    /* Título Flutuante no Topo */
+    #flow-title {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background: rgba(255, 255, 255, 0.95);
+      padding: 10px 18px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #2c3e50;
+      z-index: 10;
+      backdrop-filter: blur(4px);
+    }
+
+    /* Botões Flutuantes de Zoom */
+    .zoom-controls {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      z-index: 10;
+    }
+    .zoom-btn {
+      width: 40px;
+      height: 40px;
+      background: #ffffff;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 1.2rem;
+      font-weight: bold;
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, transform 0.1s;
+    }
+    .zoom-btn:hover { background: #f0f0f0; transform: scale(1.05); }
+
+    /* ÍCONE DE PAPELZINHO / DOCUMENTAÇÃO */
+    .doc-badge {
+      background-color: #0066cc;
+      color: white;
+      border-radius: 4px;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      position: relative;
+    }
+    
+    .doc-badge:hover {
+      background-color: #004999;
+    }
+
+    /* POP-UP FIXO COM SUPORTE A SELEÇÃO E ROLAGEM */
+    .doc-badge .tooltip {
+      display: none;
+      width: 320px;
+      max-height: 250px;
+      overflow-y: auto;
+      background-color: #1a252f;
+      color: #ffffff;
+      text-align: left;
+      border-radius: 8px;
+      padding: 14px;
+      position: absolute;
+      z-index: 1000;
+      bottom: 100%; /* Inicia encostado no topo do ícone */
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.85rem;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.35);
+      cursor: text;
+      user-select: text; /* Permite selecionar o texto */
+      pointer-events: auto; /* Permite clicar e rolar a barra */
+      margin-bottom: 8px; /* Espaço para a seta */
+    }
+
+    /* Área invisível que conecta o ícone ao tooltip para o rato não "perder" o foco */
+    .doc-badge::after {
+      content: "";
+      display: none;
+      position: absolute;
+      bottom: 100%;
+      left: 0;
+      width: 100%;
+      height: 12px;
+    }
+
+    /* Seta do Pop-up */
+    .doc-badge .tooltip::after {
+      content: "";
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      margin-left: -6px;
+      border-width: 6px;
+      border-style: solid;
+      border-color: #1a252f transparent transparent transparent;
+    }
+
+    /* Exibe o tooltip e a área de transição ao passar o rato ou focar */
+    .doc-badge:hover .tooltip,
+    .doc-badge:hover::after,
+    .doc-badge .tooltip:hover {
+      display: block;
+    }
+
+    /* Customização da Barra de Rolagem do Pop-up */
+    .doc-badge .tooltip::-webkit-scrollbar {
+      width: 6px;
+    }
+    .doc-badge .tooltip::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+    }
+    .doc-badge .tooltip::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.3);
+      border-radius: 4px;
+    }
+    .doc-badge .tooltip::-webkit-scrollbar-thumb:hover {
+      background: rgba(255,255,255,0.5);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="canvas-container">
+    <div id="flow-title">A carregar fluxo...</div>
+    <div id="canvas"></div>
+    
+    <div class="zoom-controls">
+      <button class="zoom-btn" onclick="zoomIn()" title="Aproximar (+)">+</button>
+      <button class="zoom-btn" onclick="zoomOut()" title="Afastar (-)">-</button>
+      <button class="zoom-btn" onclick="resetZoom()" title="Centralizar e Enquadrar">⤢</button>
+    </div>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "https://kauxrgvojgdwvnjgsjbv.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_0JVBgms2ut595JSIfs199A_sXIYC0lN";
+
+    const _supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const bpmnViewer = new BpmnJS({ container: '#canvas' });
+
+    function zoomIn() { bpmnViewer.get('zoomScroll').stepZoom(1); }
+    function zoomOut() { bpmnViewer.get('zoomScroll').stepZoom(-1); }
+    function resetZoom() { bpmnViewer.get('canvas').zoom('fit-viewport'); }
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const workflowId = urlParams.get('id');
+
+    async function carregarFluxo() {
+      if (!workflowId) {
+        document.getElementById('flow-title').innerText = "Aviso: ID do fluxo não informado no URL.";
+        return;
+      }
+
+      const { data, error } = await _supabase
+        .from('bpmn_workflows')
+        .select('title, xml_content')
+        .eq('id', workflowId)
+        .single();
+
+      if (error || !data) {
+        document.getElementById('flow-title').innerText = "Fluxo não encontrado";
+        return;
+      }
+
+      document.getElementById('flow-title').innerText = data.title;
+
+      try {
+        await bpmnViewer.importXML(data.xml_content);
+        resetZoom();
+        adicionarBadgesDeDocumentacao();
+      } catch (err) {
+        console.error("Erro BPMN:", err);
+      }
+    }
+
+    function obterDocumentacao(businessObject) {
+      if (!businessObject) return "";
+      
+      if (businessObject.documentation && businessObject.documentation.length > 0) {
+        return businessObject.documentation[0].text || "";
+      }
+
+      if (businessObject.extensionElements && businessObject.extensionElements.values) {
+        const extDocs = businessObject.extensionElements.values.filter(e => e.$type === 'camunda:Property' || e.name === 'documentation');
+        if (extDocs.length > 0) {
+          return extDocs[0].value || extDocs[0].text || "";
+        }
+      }
+      return "";
+    }
+
+    function adicionarBadgesDeDocumentacao() {
+      const elementRegistry = bpmnViewer.get('elementRegistry');
+      const overlays = bpmnViewer.get('overlays');
+
+      elementRegistry.forEach(function(element) {
+        const docText = obterDocumentacao(element.businessObject);
+
+        if (docText && docText.trim() !== "") {
+          const badgeHtml = document.createElement('div');
+          badgeHtml.className = 'doc-badge';
+          badgeHtml.innerHTML = '📄<div class="tooltip">' + escapeHtml(docText) + '</div>';
+
+          overlays.add(element.id, {
+            position: { top: -8, left: -8 },
+            html: badgeHtml
+          });
+        }
+      });
+    }
+
+    function escapeHtml(text) {
+      return text
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    carregarFluxo();
+  </script>
+</body>
+</html>
